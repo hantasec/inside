@@ -1,0 +1,116 @@
+import paramiko
+import sys
+import time
+
+def show_menu():
+    res = int(input(""" 
+    실행할 작업의 번호 선택하세요.
+    1. 방화벽 해제
+    2. 패키지 업데이트
+    3. 패키지 세팅(wget, vim, libstdc++, tar, gzip)
+    4. 미니콘다 설치
+    5. 주피터 노트북 실행 설정
+    6. systempython, 파라미코 설치
+    0. 종료
+    선택: """))
+    return res
+
+def ssh(ip, user, pw):
+    cli = paramiko.SSHClient()                                      
+    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())       
+    print("[%s] 서버에 연결 중..." % ip)
+    cli.connect(ip, username=user, password=pw, port=22)            
+
+    while True:
+        cmd = show_menu()
+        if cmd == 0:
+            print("프로그램을 종료합니다.")
+            cli.close()
+            break
+            
+        for i in cmd_dict[cmd]:
+            print("-> 실행 중: %s" % i)
+            
+            # init 6(재부팅)이 실행되면 SSH 연결이 끊어지므로 예외 처리
+            if i == "init 6":
+                print("시스템을 재부팅합니다. 연결이 끊어집니다.")
+                cli.exec_command(i)
+                time.sleep(2) # 재부팅 명령어 전달될 시간 부여
+                break
+
+            (stdin, stdout, stderr) = cli.exec_command(i)
+            
+            # 주의: stdout을 read()로 한 번 읽었으면, 다시 readlines()로 읽을 수 없습니다.
+            output = stdout.read().decode('utf-8').strip()
+            error = stderr.read().decode('utf-8').strip()
+            
+            if error:
+                print("[알림/에러] %s" % error)
+                # 리눅스는 정상 작동해도 경고를 stderr로 보내는 경우가 많아 sys.exit()은 주석 처리하는 것이 좋습니다.
+                
+            if output:
+                print("[결과] %s" % output)
+
+    cli.close()
+
+# 명령어 리스트 정의 (하이픈 기호 및 절대 경로 완벽 수정)
+firewall_meth = [
+    "systemctl disable --now firewalld",
+    "systemctl status firewalld",
+    "sed -i 's/^SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config",
+    "setenforce 0",
+    "init 6"
+]
+
+package_update_meth = ["dnf -y update && dnf -y upgrade"]
+
+package_setting_meth = [
+    "dnf -y install epel-release wget vim libstdc++ tar gzip",
+    "dnf makecache",
+    "dnf config-manager --set-enabled crb",
+    "dnf -y update && dnf -y upgrade"
+]
+
+miniconda_meth = [
+    "wget https://www.ubiedu.co.kr/Miniconda3-latest-Linux-x86_64.sh",
+    "chmod u+x Miniconda3-latest-Linux-x86_64.sh",
+    "./Miniconda3-latest-Linux-x86_64.sh -b", # -b (Batch) 옵션 추가 (필수)
+    "sed -i '$a export PATH=$PATH:/root/miniconda3/bin' /etc/bashrc",
+    # paramiko 특성상 환경변수 적용이 바로 안 되므로 절대 경로 사용
+    "/root/miniconda3/bin/conda config --set auto_activate false", 
+    "/root/miniconda3/bin/conda tos accept --override-channels --channel \"https://repo.anaconda.com/pkgs/main\"",
+    "/root/miniconda3/bin/conda tos accept --override-channels --channel \"https://repo.anaconda.com/pkgs/r\"",
+    "/root/miniconda3/bin/conda install jupyter -y"
+]
+
+jupyternotebook_meth = [
+    # expect는 반드시 한 줄로 이어서 묶어 보내야 합니다.
+    "expect -c 'spawn /root/miniconda3/bin/jupyter notebook password; expect \"Enter password:\"; send \"asd123!@\\r\"; expect \"Verify password:\"; send \"asd123!@\\r\"; expect eof'",
+    "echo '/root/miniconda3/bin/jupyter notebook --allow-root --ip=0.0.0.0 --port=8080 --no-browser &' > jupyter_start.sh"
+]
+
+pythonsystem_paramico_meth = [
+    "/root/miniconda3/bin/conda install pip -y",
+    "/root/miniconda3/bin/pip install --upgrade pip",
+    "/root/miniconda3/bin/pip install paramiko", 
+    "/root/miniconda3/bin/conda install -y -c conda-forge types-cryptography",
+    "/root/miniconda3/bin/python3 -m pip install ipykernel",
+    "/root/miniconda3/bin/python3 -m ipykernel install --user --name system-python --display-name \"Python 3 (System)\""
+]
+
+cmd_dict = {
+    1: firewall_meth,
+    2: package_update_meth,
+    3: package_setting_meth,
+    4: miniconda_meth,
+    5: jupyternotebook_meth,
+    6: pythonsystem_paramico_meth,
+    0: exit
+}
+
+ip = "172.16.9.111"
+user = "root"
+pw = "asd123!@"
+
+# 실행
+ssh(ip, user, pw)
