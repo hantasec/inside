@@ -1,0 +1,323 @@
+from netmiko import ConnectHandler
+
+# 찐찐 최종 버전 
+
+# 전체 구조
+# while 문 시작에 get_device_info()로 접속할 장비 정보 딕셔너리 생성. 
+# -> 접속 장치 선택
+# 그 다음 while문 : 
+# 1) choice() 로 접속 장치에서 하고싶은 작업 선택. 
+# 2) choice() 의 결과로 반환된 select 는 실행할 함수의 딕셔너리 menu 의 키 값이 된다.
+# 3) select 값이 '1'~'8' 이면 menu.get(select) 해서 해당하는 함수를 선택, 실행한다.
+# 4) menu.get(select) 에서 1~8 외의 select 값이 입력되었을 땐 None 반환해서 조건문 false. 함수 실행 패스.
+# 5) 다시 choice() 로 돌아간다. select 가 '9' 일 때까지 반복 실행.
+# 6) select 값이 '9' 면 작업 선택 while 문을 종료하고 접속 장치를 바꿔서 계속할지 선택한다.
+# 7) n 을 입력하면 전체 프로그램이 종료된다.
+
+
+# 함수 공통 구조
+# get_device_info() 로 공통사용하는 접속 장비 정보 입력을 함수화함
+# manage_cisco_device(command) 는 장치에 SSH 연결, command 인자값을 리스트로 변환(문자열일 경우)
+# 명령어 전송(net_connect.send_config_set(command)), 실행결과 출력까지 모아서 함수화 함. 
+# show_cisco_device(command) 는 연결해서 net_connect.send_command(command) 명령어를 실행하는 함수.
+
+# 함수별 변경사항
+# 3,4 ip,route 세팅은 불러올 파일에 형식을 맞춰놓으면 일괄설정 할 수 있는 구조로 설정.
+# 3,4 는 기능상 둘로 분리해서 각각 메뉴 선택창에 넣음
+# 7 DHCP 설정을 스위치에서 하려면 8 SVI 설정 해주고 7 DHCP 설정 하면 됨.
+
+# 접속 장비 정보 얻는 함수 -------------------------
+def get_device_info() :
+    host_ip = input("접속할 장비의 IP 주소를 입력하세요: ")
+    username = input("접속할 장비의 계정 이름을 입력하세요: ")
+    password = input("접속할 장비의 비밀번호를 입력하세요: ")
+
+    cisco_device = {'device_type':'cisco_ios',
+                    'host' : host_ip,
+                    'username' : username,
+                    'password' : password,
+                    'port' : 22,
+                    'conn_timeout' : 30,
+                    'auth_timeout' : 30,
+                    'banner_timeout' : 30
+    }     
+    return cisco_device
+
+# 선택 메뉴 제시 주는 함수 ------------------------------
+
+def choice() :
+    select = input("""작업을 선택하세요.\n
+    1. 세팅 백업
+    2. 세팅 전체 복원
+    3. 인터페이스 IP 일괄설정 (파일)
+    4. Route 일괄등록 (파일)  
+    5. Route 개별 등록
+    6. NAT
+    7. DHCP 설정
+    8. SVI 설정
+    9. 설정 종료
+    """)
+    return select
+
+# netmiko SSH 접속 - config-set 함수----------------------
+def manage_cisco_device(command):
+
+    if isinstance(command, str):
+        command = command.splitlines()
+        
+    with ConnectHandler(**cisco_device) as net_connect:
+        net_connect.enable()
+        output = net_connect.send_config_set(command)
+        print(output)
+        print("장비 설정 적용 완료!")
+        return output
+
+# netmiko SSH 접속 - send-command 함수-------------------
+def show_cisco_device(command):
+
+    with ConnectHandler(**cisco_device) as net_connect:
+        net_connect.enable()
+        output = net_connect.send_command(command)
+        print(output)
+        return output
+
+# 1. backup 함수------------------------------------------
+
+# 라우터인지 스위치인지에 따라 저장 폴더를 구분함.
+    
+def backup():
+    select = input("1. 라우터 | 2. 스위치")
+    name = input("백업할 파일 명(.txt 빼고 입력):")
+    command = "show run"
+    
+    output = show_cisco_device(command)
+    
+    if select == '1' :
+        with open("../../router/%s.txt"%(name), "w") as file :
+            file.write(output)
+    elif select == '2' :
+        with open("../../switch/%s.txt"%(name), "w") as file :
+            file.write(output)
+    else :
+        print("잘못된 선택입니다.")
+
+# 2. restore 함수 -------------------------
+
+def restore():
+    name = input("복구할 라우터 백업 파일명을 입력하세요. (txt제외) : ")
+    file = open("../../router/%s.txt"%(name),"r", encoding = "utf-8")
+
+    lines = file.readlines()
+    file.close()
+    ether_cmd = []
+    route_cmd = []
+
+    for i in range(len(lines)):
+        clear_line = lines[i].strip()
+        
+        if clear_line == "!" or clear_line == "":
+            continue
+
+        if(clear_line.startswith("interface")):
+            ether_cmd.append(clear_line)
+            new_clear = lines[i+1].strip()
+            ether_cmd.append(new_clear)
+
+        if(clear_line.startswith("ip forward-protocol")):
+            cnt = 1
+            while True:
+                new_clear_line = lines[i+cnt].strip()
+                if(new_clear_line.startswith("no ip http server")):
+                    break
+                route_cmd.append(new_clear_line)
+                cnt += 1
+
+    tot_cmd_lines = []
+    tot_cmd_lines.extend(ether_cmd)
+    tot_cmd_lines.extend(route_cmd)
+    tot_cmd = "\n".join(tot_cmd_lines)
+
+    output = manage_cisco_device(tot_cmd)
+
+    
+# 3. ip_setting 함수 --------------------------------------------------------
+
+# 주의사항
+# 불러올 파일의 각 줄은 아래 형식으로 작성할 것
+# 인터페이스명 IP주소 서브넷마스크
+
+# 예시
+# e2/0 192.168.1.1 255.255.255.0
+# e2/1 192.168.2.1 255.255.255.0
+    
+def ip_setting():
+    name = input("인터페이스 ip적용 세팅파일 명을 입력해 주세요. (txt제외) : ")
+    path_ip = "../../router/test/%s.txt"%(name)
+    command = ""
+    
+    with open(path_ip, 'r') as f:
+        lines = f.readlines()      
+        for ip in lines :
+            ip = ip.strip()
+            if not ip:
+                continue    
+            (interface, network, subnet) = ip.split()
+            command += (
+                "int " + interface + "\n"
+                + "ip add " + network + " " + subnet + "\n"
+                + "no shut\n"
+            )
+        print("설정된 값\n" + command)
+        manage_cisco_device(command)
+
+# 4. route_setting 함수 ------------------------------------------------------
+
+# 주의사항
+# 파일의 각 줄은 반드시 아래 형식으로 작성할 것
+# 목적지네트워크 서브넷마스크 다음홉IP
+
+# 예시
+# 172.16.0.0 255.255.0.0 192.168.1.1
+# 192.168.10.0 255.255.255.0 192.168.1.254
+
+def route_setting():
+   
+    name = input("라우트 세팅파일 명을 입력해 주세요. (txt제외) : ")
+    path_route = "../../router/test/%s.txt"%(name)
+    command = ""
+
+    with open(path_route, 'r') as f:
+        lines = f.readlines()
+        
+        for route in lines :
+            route = route.strip()
+            
+            if not route:
+                continue
+            
+            command += "ip route " + route + "\n"
+            
+        print("설정된 값\n" + command)
+        
+        manage_cisco_device(command)
+
+# 5.수동 ip route 입력 -----------------------------------------
+
+# 지우 코드가 안됐던 이유 : 1. SSH 연결이 안됨 2.인터페이스에 들어가서 IP route 를 하려고 해서
+
+def static_router_setting():
+
+    ro_ip_str = input("ip대역 입력:")
+    ro_sub_str = input("서브넷마스크 입력:")
+    ro_gw_str = input("게이트웨이 입력:")
+
+    command = (
+        "ip route "
+        + ro_ip_str + " "
+        + ro_sub_str + " "
+        + ro_gw_str
+    )
+
+    manage_cisco_device(command)
+
+# 6. NAT 설정 ---------------------------------------------------
+
+def nat_setting():
+
+    ac_num = input("access-list 번호 : ")
+    net = input("network 범위 : ")
+    wild = input("wildmask 값 : ")
+
+    command = (
+        "access-list "
+        + ac_num
+        + " permit "
+        + net
+        + " "
+        + wild
+    )
+
+    # 추후 추가사항
+    # ip nat inside source list ~ interface ~ overload
+    # ip nat pool 생성
+    # inside / outside 인터페이스 지정
+    # static NAT 설정
+    # dynamic NAT 설정
+    # PAT(overload) 설정
+    # show ip nat translations 확인 기능
+    
+    print(command)
+    manage_cisco_device(command)
+
+# 7. 라우터,스위치 DHCP 설정 ---------------------------------------------------
+# 스위치는 SVI 해주고 하면 됨
+
+def dhcp_setting():
+    name = input("DHCP 풀 이름: ")
+    network = input("네트워크 대역과 마스크: ")
+    gateway = input("디폴트 라우터: ")
+    dns = input("DNS 서버: ")
+    exclude = input("예외 주소 대역: ")
+
+    command = (
+        "ip dhcp excluded-address " + exclude + "\n"
+        + "ip dhcp pool " + name + "\n"
+        + "network " + network + "\n"
+        + "default-router " + gateway + "\n"
+        + "dns-server " + dns + "\n"
+        + "exit\n"
+    )
+
+    print("설정된 값\n" + command)
+    manage_cisco_device(command)
+
+# 8. SVI (Vlan) 설정 --------------------------------------------------------
+
+def svi_setting():
+    vlan_id = input("VLAN id 번호 입력: ")
+    ip = input("SVI IP 주소 입력: ")
+    subnet = input("서브넷 마스크 입력: ")
+
+    command = (
+        "vlan " + vlan_id + "\n"
+        + "interface vlan " + vlan_id + "\n"
+        + "ip address " + ip + " " + subnet + "\n"
+        + "no shut\n"
+    )
+
+    print("설정된 값\n" + command)
+    manage_cisco_device(command)
+    print("SVI 설정 적용 완료!")
+
+# 실행부 --------------------------------------------------------------------
+menu = {
+    "1": backup,
+    "2": restore,
+    "3": ip_setting,
+    "4": route_setting,
+    "5": static_router_setting,
+    "6": nat_setting,
+    "7": dhcp_setting,
+    "8": svi_setting
+}
+
+while True:
+    cisco_device = get_device_info()
+
+    while True:
+        select = choice()
+
+        if select == "9":
+            break
+
+        func = menu.get(select)
+
+        if func:
+            func()
+        else:
+            print("잘못된 선택입니다.")
+
+    again = input("다른 장비에 접속하시겠습니까? y/n : ")
+
+    if again.lower() != "y":
+        break
