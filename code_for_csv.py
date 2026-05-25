@@ -2,11 +2,70 @@
 # zones 에 팀 zone 등록, 팀 zone 생성, 반복[사용자 없으면 등록 -> VH 생성 -> index.html 생성 -> zone A 레코드에 등록] (중복체크)
 # 설치 : roc_http_dns_install(cli)
 # 실행 : roc_web_dns_set(cli)
+# samba, FTP 등록 함수 만들어 넣었음~~~ 테스트는 안함 연결이 안댐 
+
+def ubt_samba_mounting(cli, ip, smb_dir, mnt_path, username, passwd):
+    cred_path = "/etc/samba/cred/"
+    cred_file = cred_path + username
+
+    cmd = "DEBIAN_FRONTEND=noninteractive apt -y install samba cifs-utils"
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    cmd = """mkdir -p %s
+mkdir -p %s
+cat > %s << EOF
+username=%s
+password=%s
+EOF
+chmod 700 %s
+chmod 600 %s
+""" % (cred_path, mnt_path, cred_file,
+       username, passwd,
+       cred_path, cred_file)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    cmd = """grep -q '//%s/%s ' /etc/fstab || \
+echo '//%s/%s %s cifs credentials=%s,iocharset=utf8,vers=3.0 0 0' >> /etc/fstab
+systemctl daemon-reload
+mount -a
+""" % (ip, smb_dir,
+       ip, smb_dir,
+       mnt_path, cred_file)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
 
 
+def roc_samba_mounting(cli, ip, smb_dir, mnt_path, username, passwd):
+    cred_path = "/etc/samba/cred/"
+    cred_file = cred_path + username
 
+    cmd = "dnf -y install samba samba-client samba-common cifs-utils"
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
 
+    cmd = """mkdir -p %s
+mkdir -p %s
+cat > %s << EOF
+username=%s
+password=%s
+EOF
+chmod 600 %s
+""" % (cred_path, mnt_path, cred_file, username, passwd, cred_file)
 
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    cmd = """grep -q '//%s/%s ' /etc/fstab || echo '//%s/%s %s cifs credentials=%s,iocharset=utf8 0 0' >> /etc/fstab
+systemctl daemon-reload
+mount -a
+""" % (ip, smb_dir, ip, smb_dir, mnt_path, cred_file)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
 def ubt_restricted_ftp_setting(cli, user):
     cmd = """DEBIAN_FRONTEND=noninteractive apt -y install vsftpd&&
 sed -i 's|^#*write_enable=.*|write_enable=YES|' /etc/vsftpd.conf&&
