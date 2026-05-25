@@ -3,6 +3,41 @@
 # 설치 : roc_http_dns_install(cli)
 # 실행 : roc_web_dns_set(cli)
 
+
+
+
+
+def ubt_restricted_ftp_setting(cli, user):
+    cmd = """DEBIAN_FRONTEND=noninteractive apt -y install vsftpd&&
+sed -i 's|^#*write_enable=.*|write_enable=YES|' /etc/vsftpd.conf&&
+sed -i 's|^#*userlist_enable=.*|userlist_enable=NO|' /etc/vsftpd.conf&&
+sudo sed -i 's/^auth.*required.*pam_shells.so/#&/' /etc/pam.d/vsftpd&&
+usermod -s /usr/sbin/nologin %s&&
+systemctl enable --now vsftpd&&
+systemctl restart vsftpd
+"""%(user)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+def roc_restricted_ftp_setting(cli, user):
+    cmd = """dnf -y install vsftpd &&
+sed -i 's|^#*write_enable=.*|write_enable=YES|' /etc/vsftpd/vsftpd.conf &&
+sed -i 's|^#*userlist_enable=.*|userlist_enable=YES|' /etc/vsftpd/vsftpd.conf &&
+sed -i 's|^#*userlist_deny=.*|userlist_deny=NO|' /etc/vsftpd/vsftpd.conf &&
+grep -qxF '%s' /etc/vsftpd/user_list || echo '%s' >> /etc/vsftpd/user_list &&
+sed -i 's|^.*pam_shells\\.so.*|#auth       required    pam_shells.so|' /etc/pam.d/vsftpd &&
+usermod -s /sbin/nologin %s &&
+systemctl enable --now vsftpd &&
+systemctl restart vsftpd
+""" % (user, user, user)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+
+
+
 def roc_http_dns_install(cli):
     
     print("\nhttpd, bind 설치 및 서비스 활성화 중...")
