@@ -3,6 +3,167 @@
 # 설치 : roc_http_dns_install(cli)
 # 실행 : roc_web_dns_set(cli)
 # samba, FTP 등록 함수 만들어 넣었음~~~ 테스트는 안함 연결이 안댐 
+# php, cms, mariadb
+
+
+
+
+def roc_php_set(cli) :
+
+    cmd = """dnf install https://rpms.remirepo.net/enterprise/remi-release-9.rpm &&
+dnf config-manager --set-enabled remi &&
+dnf -y module install php:remi-8.4 &&
+dnf module enable php:remi-8.4 &&
+php --version # 8.4 &&
+dnf --disablerepo=remi-safe update &&
+dnf -y install libjpeg* libpng* freetype* gd-* gcc gcc-c++ gdbm-devel giflib* &&
+dnf -y install php php-bcmath php-cli php-common php-devel php-mbstring php-odbc php-process && 
+dnf -y install php-gd libpng-devel php-mysql php-gettext php-pear php-xml php-xmlrpc &&
+dnf -y install php-zip php-opcache php-mysqlnd php-fpm php*-zip php-intl php-pdo &&
+dnf -y install php-bcmath libzip-devel php-pear zlib-devel &&
+dnf -y update
+"""
+   
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    if not error:
+        print("아파치 VirtualHost 설정 추가 완료.")
+
+
+def roc_mariadb_char_set(cli):
+
+    cmd ="""
+    cat <<EOF >> a.html
+    [client]
+    default-character-set = utf8mb4
+    EOF
+    sed -i "/^\[mysqld\]/a character-set-server = utf8mb4" /etc/my.cnf.d/mariadb-server.cnf
+    """
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    if not error:
+        print("MariaDB charset 설정 완료")
+
+
+
+def roc_mariadb_secure(cli):
+
+    sql = f"""
+ALTER USER 'root'@'localhost'
+IDENTIFIED VIA unix_socket;
+
+DELETE FROM mysql.user
+WHERE User='';
+
+DROP DATABASE IF EXISTS test;
+
+DELETE FROM mysql.db
+WHERE Db='test'
+OR Db LIKE 'test\\_%';
+
+ALTER USER 'root'@'localhost'
+IDENTIFIED BY 'asd123!@';
+
+FLUSH PRIVILEGES;
+"""
+
+    cmd = f'''sudo mysql -e "{sql}"
+
+echo ""
+echo "========= 설정 확인 ========="
+
+sudo mysql -e "
+SELECT User,Host,plugin
+FROM mysql.user;
+
+SHOW DATABASES;
+"
+
+echo ""
+echo "========= 로그인 테스트 ========="
+
+mysql -u root -p 'asd123!@' -e "
+SELECT 'LOGIN SUCCESS';
+"
+'''
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    if not error:
+        print("MariaDB 보안 설정 완료")
+
+
+def roc_phpmyadmin_set(cli):
+    cmd = """dnf -y install phpmyadmin
+systemctl restart httpd
+systemctl restart php-fpm
+chown -R apache:apache /usr/share/phpMyAdmin
+sed -i "s/cookie';$/http';/" /etc/phpMyAdmin/config.inc.php && 
+sed -i '/<Directory \/usr\/share\/phpMyAdmin\/>/,/<\/Directory>/ s|Require .*|Require all granted|' /etc/httpd/conf.d/phpMyAdmin.conf
+systemctl restart httpd
+"""
+    stdin, stdout, stderr = cli.exec_command(cmd)
+    output, error = cli_error_check(stdout, stderr)
+
+    if not error:
+        print("MariaDB 보안 설정 완료")
+
+
+
+def roc_mariadb_add_user(cli, username=""):
+
+    if username == "":
+        username = input("생성할 DB 계정명 : ")
+
+    passwd = input("비밀번호 : ")
+
+    sql = """
+CREATE USER IF NOT EXISTS '%s'@'%%'
+IDENTIFIED BY 'asd123!@';
+
+CREATE DATABASE IF NOT EXISTS %s;
+
+GRANT ALL PRIVILEGES
+ON %s.*
+TO '%s'@'%%';
+
+FLUSH PRIVILEGES;
+""" % (username,
+       username,
+       username,
+       username)
+
+    cmd = '''mysql -u root -p'asd123!@' -e "%s"
+
+echo ""
+echo "========= 생성 결과 ========="
+
+mysql -u root -p'asd123!@' -e "
+SELECT User,Host
+FROM mysql.user
+WHERE User='%s';
+
+SHOW DATABASES LIKE '%s';
+
+SHOW GRANTS FOR '%s'@'%%';
+"
+''' % (
+       sql,
+       username,
+       username,
+       username)
+
+    stdin, stdout, stderr = cli.exec_command(cmd)
+
+    output, error = cli_error_check(stdout, stderr)
+
+    if not error:
+        print("%s DB 계정 생성 완료" % username)
+
 
 def ubt_samba_mounting(cli, ip, smb_dir, mnt_path, username, passwd):
     cred_path = "/etc/samba/cred/"
